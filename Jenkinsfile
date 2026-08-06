@@ -8,7 +8,18 @@ pipeline {
     }
 
     environment {
+
         SCANNER_HOME = tool 'SonarScanner'
+
+        IMAGE_NAME = "employee-portal"
+        IMAGE_TAG  = "latest"
+
+        AWS_REGION = "ap-south-1"
+        AWS_ACCOUNT_ID = "849996548389"
+
+        ECR_REPOSITORY = "employee-portal"
+
+        ECR_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
     }
 
     stages {
@@ -36,7 +47,7 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                echo "========== SONARQUBE ANALYSIS =========="
+                echo "========== SONAR ANALYSIS =========="
                 withSonarQubeEnv('SonarQube') {
                     sh 'mvn clean verify sonar:sonar'
                 }
@@ -91,16 +102,72 @@ cat > settings.xml <<EOF
 </settings>
 EOF
 
-echo "========== GENERATED SETTINGS.XML =========="
-cat settings.xml
-
-echo "========== DEPLOYING TO NEXUS =========="
-
 mvn deploy -DskipTests -s settings.xml
 '''
                 }
             }
         }
+
+        stage('Docker Build') {
+            steps {
+
+                echo "========== BUILD DOCKER IMAGE =========="
+
+                sh """
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    docker images
+                """
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+
+                echo "========== TRIVY IMAGE SCAN =========="
+
+                sh """
+                    trivy image \
+                    --severity HIGH,CRITICAL \
+                    --exit-code 0 \
+                    ${IMAGE_NAME}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Login to AWS ECR') {
+            steps {
+
+                echo "========== LOGIN TO ECR =========="
+
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds']
+                ]) {
+
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    docker login \
+                    --username AWS \
+                    --password-stdin \
+                    ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    """
+                }
+            }
+        }
+
+        stage('Push Image to ECR') {
+            steps {
+
+                echo "========== PUSH IMAGE TO ECR =========="
+
+                sh """
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_URI}:${IMAGE_TAG}
+
+                    docker push ${ECR_URI}:${IMAGE_TAG}
+                """
+            }
+        }
+
     }
 
     post {
@@ -114,6 +181,16 @@ mvn deploy -DskipTests -s settings.xml
         }
 
         always {
+
+            echo "========== CLEANUP =========="
+
+            sh '''
+            docker image prune -f || true
+            rm -f settings.xml || true
+            '''
+
+            cleanWs()
+
             echo "========== PIPELINE FINISHED =========="
         }
     }
