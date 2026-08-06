@@ -52,15 +52,44 @@ pipeline {
 
         }
 
-        stage('Package') {
+      stage('Package') {
+    steps {
+        sh 'mvn clean package -DskipTests'
+    }
+}
 
-            steps {
+stage('Upload to Nexus') {
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'nexus-creds',
+            usernameVariable: 'NEXUS_USER',
+            passwordVariable: 'NEXUS_PASS'
+        )]) {
 
-                sh 'mvn package -DskipTests'
+            sh '''
+            cat > settings.xml <<EOF
+                <settings>
+                <servers>
+                    <server>
+                    <id>nexus-releases</id>
+                    <username>$NEXUS_USER</username>
+                    <password>$NEXUS_PASS</password>
+                    </server>
 
-            }
+                    <server>
+                    <id>nexus-snapshots</id>
+                    <username>$NEXUS_USER</username>
+                    <password>$NEXUS_PASS</password>
+                    </server>
+                </servers>
+                </settings>
+                EOF
 
+            mvn deploy -DskipTests -s settings.xml
+            '''
         }
+    }
+}
 
     }
 
