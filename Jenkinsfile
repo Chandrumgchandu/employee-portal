@@ -1,9 +1,14 @@
 pipeline {
+
     agent any
 
     tools {
         jdk 'JDK21'
         maven 'Maven'
+    }
+
+    environment {
+        SCANNER_HOME = tool 'SonarScanner'
     }
 
     stages {
@@ -14,21 +19,75 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Compile') {
             steps {
-                sh 'mvn clean package'
+                sh 'mvn clean compile'
             }
+        }
+
+        stage('Unit Test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+
+            steps {
+
+                withSonarQubeEnv('SonarQube') {
+
+                    sh '''
+                    mvn sonar:sonar \
+                    -Dsonar.projectKey=employee-portal
+                    '''
+
+                }
+
+            }
+
+        }
+
+        stage('Quality Gate') {
+
+            steps {
+
+                timeout(time: 5, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: true
+
+                }
+
+            }
+
+        }
+
+        stage('Package') {
+
+            steps {
+
+                sh 'mvn package -DskipTests'
+
+            }
+
         }
 
     }
 
     post {
+
         success {
-            echo 'Build Successful!'
+
+            echo 'Pipeline Success'
+
         }
 
         failure {
-            echo 'Build Failed!'
+
+            echo 'Pipeline Failed'
+
         }
+
     }
+
 }
