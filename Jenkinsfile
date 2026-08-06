@@ -32,22 +32,12 @@ pipeline {
         }
 
         stage('SonarQube Analysis') {
-
             steps {
-
                 withSonarQubeEnv('SonarQube') {
-
-                    sh '''
-                    mvn sonar:sonar \
-                    -Dsonar.projectKey=employee-portal
-                    '''
-
+                    sh 'mvn clean verify sonar:sonar'
                 }
-
             }
-
         }
-
         stage('Quality Gate') {
 
             steps {
