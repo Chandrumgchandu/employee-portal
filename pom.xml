@@ -23,7 +23,7 @@
         <java.version>21</java.version>
 
         <sonar.projectKey>employee-portal</sonar.projectKey>
-        <sonar.host.url>http://3.109.184.199:9000</sonar.host.url>
+        <sonar.host.url>http://52.66.191.87:9000</sonar.host.url>
     </properties>
 
     <dependencies>
@@ -60,12 +60,12 @@
 
     <repository>
         <id>nexus-releases</id>
-        <url>http://3.109.184.199:8081/repository/maven-releases/</url>
+        <url>http://52.66.191.87:8081/repository/maven-releases/</url>
     </repository>
 
     <snapshotRepository>
         <id>nexus-snapshots</id>
-        <url>http://3.109.184.199:8081/repository/maven-snapshots/</url>
+        <url>http://52.66.191.87:8081/repository/maven-snapshots/</url>
     </snapshotRepository>
 
 	</distributionManagement>
