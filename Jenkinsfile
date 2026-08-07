@@ -161,9 +161,11 @@ mvn deploy -DskipTests -s settings.xml
             echo "========== PUSH IMAGE TO ECR =========="
 
             sh """
-                docker tag ${IMAGE_NAME}:latest ${ECR_URI}:${IMAGE_TAG}
+                 docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_URI}:${IMAGE_TAG}
+                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_URI}:latest
 
-                docker push ${ECR_URI}:${IMAGE_TAG}
+               docker push ${ECR_URI}:${IMAGE_TAG}
+               docker push ${ECR_URI}:latest
             """
         }
     }
