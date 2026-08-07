@@ -12,7 +12,7 @@ pipeline {
         SCANNER_HOME = tool 'SonarScanner'
 
         IMAGE_NAME = "employee-portal"
-        IMAGE_TAG  = "latest"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
 
         AWS_REGION = "ap-south-1"
         AWS_ACCOUNT_ID = "849996548389"
@@ -156,17 +156,68 @@ mvn deploy -DskipTests -s settings.xml
         }
 
         stage('Push Image to ECR') {
-            steps {
+        steps {
 
-                echo "========== PUSH IMAGE TO ECR =========="
+            echo "========== PUSH IMAGE TO ECR =========="
 
-                sh """
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_URI}:${IMAGE_TAG}
+            sh """
+                docker tag ${IMAGE_NAME}:latest ${ECR_URI}:${IMAGE_TAG}
 
-                    docker push ${ECR_URI}:${IMAGE_TAG}
-                """
-            }
+                docker push ${ECR_URI}:${IMAGE_TAG}
+            """
         }
+    }
+    stage('Refresh ECR Secret') {
+    steps {
+
+        echo "========== REFRESH ECR SECRET =========="
+
+        withCredentials([
+            [$class: 'AmazonWebServicesCredentialsBinding',
+            credentialsId: 'aws-creds']
+        ]) {
+
+            sh """
+                kubectl delete secret ecr-secret \
+                -n employee-portal --ignore-not-found
+
+                kubectl create secret docker-registry ecr-secret \
+                --docker-server=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com \
+                --docker-username=AWS \
+                --docker-password=\$(aws ecr get-login-password --region ${AWS_REGION}) \
+                -n employee-portal
+            """
+        }
+    }
+}
+
+stage('Deploy to Kubernetes') {
+    steps {
+
+        echo "========== DEPLOY TO KUBERNETES =========="
+
+        sh """
+            kubectl set image deployment/employee-portal \
+            employee-portal=${ECR_URI}:${IMAGE_TAG} \
+            -n employee-portal
+
+            kubectl rollout status deployment/employee-portal \
+            -n employee-portal --timeout=180s
+
+            echo "========== DEPLOYMENT =========="
+
+            kubectl get deployment employee-portal -n employee-portal
+
+            echo "========== PODS =========="
+
+            kubectl get pods -n employee-portal -o wide
+
+            echo "========== SERVICES =========="
+
+            kubectl get svc -n employee-portal
+        """
+    }
+}
 
     }
 
