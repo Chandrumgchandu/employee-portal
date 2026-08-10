@@ -20,6 +20,9 @@ pipeline {
         ECR_REPOSITORY = "employee-portal"
 
         ECR_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+
+        TRIVY_CACHE = "/var/lib/jenkins/.cache/trivy"
+        TRIVY_TMP   = "/var/lib/jenkins/trivy-tmp"
     }
 
     stages {
@@ -48,6 +51,7 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo "========== SONAR ANALYSIS =========="
+
                 withSonarQubeEnv('SonarQube') {
                     sh 'mvn clean verify sonar:sonar'
                 }
@@ -57,6 +61,7 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 echo "========== QUALITY GATE =========="
+
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
@@ -66,6 +71,7 @@ pipeline {
         stage('Package') {
             steps {
                 echo "========== PACKAGE =========="
+
                 sh 'mvn clean package -DskipTests'
             }
         }
@@ -84,26 +90,30 @@ pipeline {
                 ]) {
 
                     sh '''
-cat > settings.xml <<EOF
+                        cat > settings.xml <<EOF
 <settings>
-  <servers>
-    <server>
-      <id>nexus-releases</id>
-      <username>$NEXUS_USER</username>
-      <password>$NEXUS_PASS</password>
-    </server>
+    <servers>
 
-    <server>
-      <id>nexus-snapshots</id>
-      <username>$NEXUS_USER</username>
-      <password>$NEXUS_PASS</password>
-    </server>
-  </servers>
+        <server>
+            <id>nexus-releases</id>
+            <username>$NEXUS_USER</username>
+            <password>$NEXUS_PASS</password>
+        </server>
+
+        <server>
+            <id>nexus-snapshots</id>
+            <username>$NEXUS_USER</username>
+            <password>$NEXUS_PASS</password>
+        </server>
+
+    </servers>
 </settings>
 EOF
 
-mvn deploy -DskipTests -s settings.xml
-'''
+                        echo "========== DEPLOYING TO NEXUS =========="
+
+                        mvn deploy -DskipTests -s settings.xml
+                    '''
                 }
             }
         }
@@ -113,10 +123,15 @@ mvn deploy -DskipTests -s settings.xml
 
                 echo "========== BUILD DOCKER IMAGE =========="
 
-                sh """
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                    docker images
-                """
+                sh '''
+                    docker build \
+                        -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                        .
+
+                    echo "========== BUILT IMAGE =========="
+
+                    docker images | grep employee-portal
+                '''
             }
         }
 
@@ -125,102 +140,133 @@ mvn deploy -DskipTests -s settings.xml
 
                 echo "========== TRIVY IMAGE SCAN =========="
 
-                sh """
+                sh '''
+                    mkdir -p ${TRIVY_CACHE}
+                    mkdir -p ${TRIVY_TMP}
+
+                    export TMPDIR=${TRIVY_TMP}
+
                     trivy image \
-                    --severity HIGH,CRITICAL \
-                    --exit-code 0 \
-                    ${IMAGE_NAME}:${IMAGE_TAG}
-                """
+                        --config /dev/null \
+                        --cache-dir ${TRIVY_CACHE} \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --skip-version-check \
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
             }
         }
 
         stage('Login to AWS ECR') {
             steps {
 
-                echo "========== LOGIN TO ECR =========="
+                echo "========== LOGIN TO AWS ECR =========="
 
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds']
+                     credentialsId: 'aws-creds']
                 ]) {
 
-                    sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login \
-                    --username AWS \
-                    --password-stdin \
-                    ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                    """
+                    sh '''
+                        aws ecr get-login-password \
+                            --region ${AWS_REGION} | \
+                        docker login \
+                            --username AWS \
+                            --password-stdin \
+                            ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    '''
                 }
             }
         }
 
         stage('Push Image to ECR') {
-        steps {
+            steps {
 
-            echo "========== PUSH IMAGE TO ECR =========="
+                echo "========== PUSH IMAGE TO ECR =========="
 
-            sh """
-                 docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_URI}:${IMAGE_TAG}
-                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_URI}:latest
+                sh '''
+                    docker tag \
+                        ${IMAGE_NAME}:${IMAGE_TAG} \
+                        ${ECR_URI}:${IMAGE_TAG}
 
-               docker push ${ECR_URI}:${IMAGE_TAG}
-               docker push ${ECR_URI}:latest
-            """
+                    docker tag \
+                        ${IMAGE_NAME}:${IMAGE_TAG} \
+                        ${ECR_URI}:latest
+
+                    echo "========== PUSH BUILD TAG =========="
+
+                    docker push ${ECR_URI}:${IMAGE_TAG}
+
+                    echo "========== PUSH LATEST TAG =========="
+
+                    docker push ${ECR_URI}:latest
+                '''
+            }
         }
-    }
-    stage('Refresh ECR Secret') {
-    steps {
 
-        echo "========== REFRESH ECR SECRET =========="
+        stage('Refresh ECR Secret') {
+            steps {
 
-        withCredentials([
-            [$class: 'AmazonWebServicesCredentialsBinding',
-            credentialsId: 'aws-creds']
-        ]) {
+                echo "========== REFRESH ECR SECRET =========="
 
-            sh """
-                kubectl delete secret ecr-secret \
-                -n employee-portal --ignore-not-found
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                     credentialsId: 'aws-creds']
+                ]) {
 
-                kubectl create secret docker-registry ecr-secret \
-                --docker-server=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com \
-                --docker-username=AWS \
-                --docker-password=\$(aws ecr get-login-password --region ${AWS_REGION}) \
-                -n employee-portal
-            """
+                    sh '''
+                        kubectl delete secret ecr-secret \
+                            -n employee-portal \
+                            --ignore-not-found
+
+                        kubectl create secret docker-registry ecr-secret \
+                            --docker-server=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com \
+                            --docker-username=AWS \
+                            --docker-password="$(aws ecr get-login-password --region ${AWS_REGION})" \
+                            -n employee-portal
+                    '''
+                }
+            }
         }
-    }
-}
 
-stage('Deploy to Kubernetes') {
-    steps {
+        stage('Deploy to Kubernetes') {
+            steps {
 
-        echo "========== DEPLOY TO KUBERNETES =========="
+                echo "========== DEPLOY TO KUBERNETES =========="
 
-        sh """
-            kubectl set image deployment/employee-portal \
-            employee-portal=${ECR_URI}:${IMAGE_TAG} \
-            -n employee-portal
+                sh '''
+                    kubectl set image \
+                        deployment/employee-portal \
+                        employee-portal=${ECR_URI}:${IMAGE_TAG} \
+                        -n employee-portal
 
-            kubectl rollout status deployment/employee-portal \
-            -n employee-portal --timeout=180s
+                    echo "========== WAITING FOR ROLLOUT =========="
 
-            echo "========== DEPLOYMENT =========="
+                    kubectl rollout status \
+                        deployment/employee-portal \
+                        -n employee-portal \
+                        --timeout=180s
 
-            kubectl get deployment employee-portal -n employee-portal
+                    echo "========== DEPLOYMENT =========="
 
-            echo "========== PODS =========="
+                    kubectl get deployment \
+                        employee-portal \
+                        -n employee-portal
 
-            kubectl get pods -n employee-portal -o wide
+                    echo "========== PODS =========="
 
-            echo "========== SERVICES =========="
+                    kubectl get pods \
+                        -n employee-portal \
+                        -o wide
 
-            kubectl get svc -n employee-portal
-        """
-    }
-}
+                    echo "========== SERVICES =========="
 
+                    kubectl get svc \
+                        -n employee-portal
+                '''
+            }
+        }
     }
 
     post {
@@ -238,8 +284,8 @@ stage('Deploy to Kubernetes') {
             echo "========== CLEANUP =========="
 
             sh '''
-            docker image prune -f || true
-            rm -f settings.xml || true
+                docker image prune -f || true
+                rm -f settings.xml || true
             '''
 
             cleanWs()
