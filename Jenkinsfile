@@ -15,7 +15,7 @@ pipeline {
         IMAGE_TAG  = "${BUILD_NUMBER}"
 
         AWS_REGION = "ap-south-1"
-        AWS_ACCOUNT_ID = "849996548389"
+        AWS_ACCOUNT_ID = credentials('aws-account-id')
 
         ECR_REPOSITORY = "employee-portal"
 
