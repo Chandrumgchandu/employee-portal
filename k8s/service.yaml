@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: employee-portal
+  namespace: employee-portal
+  labels:
+    app: employee-portal
+spec:
+  type: ClusterIP
+  selector:
+    app: employee-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
